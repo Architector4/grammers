@@ -390,7 +390,7 @@ impl Connection {
                         value: Some(seconds),
                         ..
                     })) if slept_flood < 5 && seconds <= flood_sleep_threshold => {
-                        let delay = std::time::Duration::from_secs(seconds as _);
+                        let delay = std::time::Duration::from_secs(seconds.max(1) as _);
                         info!(
                             "sleeping on {} for {:?} before retrying {}",
                             name,
