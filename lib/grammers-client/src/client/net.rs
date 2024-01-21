@@ -377,7 +377,7 @@ impl Connection {
         flood_sleep_threshold: u32,
         on_updates: F,
     ) -> Result<R::Return, InvocationError> {
-        let mut slept_flood = false;
+        let mut slept_flood = 0;
 
         let mut rx = { self.request_tx.read().unwrap().enqueue(request) };
         loop {
@@ -389,7 +389,7 @@ impl Connection {
                         code: 420,
                         value: Some(seconds),
                         ..
-                    })) if !slept_flood && seconds <= flood_sleep_threshold => {
+                    })) if slept_flood < 5 && seconds <= flood_sleep_threshold => {
                         let delay = std::time::Duration::from_secs(seconds as _);
                         info!(
                             "sleeping on {} for {:?} before retrying {}",
@@ -398,7 +398,7 @@ impl Connection {
                             std::any::type_name::<R>()
                         );
                         tokio::time::sleep(delay).await;
-                        slept_flood = true;
+                        slept_flood += 1;
                         rx = self.request_tx.read().unwrap().enqueue(request);
                         continue;
                     }
