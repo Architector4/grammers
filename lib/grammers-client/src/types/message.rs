@@ -261,6 +261,35 @@ impl Message {
         self.msg.fwd_from.clone()
     }
 
+    /// If this message was forwarded from a previous message, and the original sender's privacy
+    /// settings allow it, return the original sender.
+    pub fn forwarded_from(&self) -> Option<&types::Chat> {
+        self.msg
+            .fwd_from
+            .as_ref()
+            .and_then(|fwd_from| {
+                let tl::enums::MessageFwdHeader::Header(header) = fwd_from;
+                header.from_id.as_ref()
+            })
+            .and_then(|fwd_from| self.chats.get(fwd_from))
+    }
+
+    /// If this message was forwarded from a previous message, return the original sender's name.
+    pub fn forwarded_from_name(&self) -> Option<&str> {
+        if let Some(chat) = self.forwarded_from() {
+            return Some(chat.name());
+        }
+
+        self.msg
+            .fwd_from
+            .as_ref()
+            .and_then(|fwd_from| {
+                let tl::enums::MessageFwdHeader::Header(header) = fwd_from;
+                header.from_name.as_ref()
+            })
+            .map(String::as_str)
+    }
+
     /// If this message was sent @via some inline bot, return the bot's user identifier.
     pub fn via_bot_id(&self) -> Option<i64> {
         self.msg.via_bot_id
