@@ -20,7 +20,7 @@ mod encrypted;
 mod plain;
 
 use crate::MsgId;
-use crypto::RingBuffer;
+use crypto::DequeBuffer;
 pub use encrypted::{
     Encrypted, ENCRYPTED_PACKET_HEADER_LEN, MAX_TRANSPORT_HEADER_LEN, MESSAGE_CONTAINER_HEADER_LEN,
     PLAIN_PACKET_HEADER_LEN,
@@ -124,27 +124,24 @@ impl std::error::Error for DeserializeError {}
 impl fmt::Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::BadAuthKey { got, expected } => write!(
-                f,
-                "bad server auth key (got {}, expected {})",
-                got, expected
-            ),
-            Self::BadMessageId { got } => write!(f, "bad server message id (got {})", got),
+            Self::BadAuthKey { got, expected } => {
+                write!(f, "bad server auth key (got {got}, expected {expected})")
+            }
+            Self::BadMessageId { got } => write!(f, "bad server message id (got {got})"),
             Self::NegativeMessageLength { got } => {
-                write!(f, "bad server message length (got {})", got)
+                write!(f, "bad server message length (got {got})")
             }
             Self::TooLongMessageLength { got, max_length } => write!(
                 f,
-                "bad server message length (got {}, when at most it should be {})",
-                got, max_length
+                "bad server message length (got {got}, when at most it should be {max_length})"
             ),
             Self::MessageBufferTooSmall => write!(
                 f,
                 "server responded with a payload that's too small to fit a valid message"
             ),
             Self::DecompressionFailed => write!(f, "failed to decompress server's data"),
-            Self::UnexpectedConstructor { id } => write!(f, "unexpected constructor: {:08x}", id),
-            Self::DecryptionError(ref error) => write!(f, "failed to decrypt message: {}", error),
+            Self::UnexpectedConstructor { id } => write!(f, "unexpected constructor: {id:08x}"),
+            Self::DecryptionError(ref error) => write!(f, "failed to decrypt message: {error}"),
         }
     }
 }
@@ -191,7 +188,7 @@ pub trait Mtp {
     ///
     /// The definition of "too large" is roughly 1MB, so as long as the
     /// payload is below that mark, it's safe to call.
-    fn push(&mut self, buffer: &mut RingBuffer<u8>, request: &[u8]) -> Option<MsgId>;
+    fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId>;
 
     /// Finalizes the buffer of requests.
     ///
@@ -202,7 +199,7 @@ pub trait Mtp {
     ///
     /// When at least one message is serialized, the last generated `MsgId` is returned.
     /// This will either belong to the container (if used) or the last serialized message.
-    fn finalize(&mut self, buffer: &mut RingBuffer<u8>) -> Option<MsgId>;
+    fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId>;
 
     /// Deserializes a single incoming message payload into zero or more responses.
     fn deserialize(&mut self, payload: &[u8]) -> Result<Vec<Deserialization>, DeserializeError>;

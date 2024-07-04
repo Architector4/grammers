@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 use super::{Error, Transport, UnpackedOffset};
-use grammers_crypto::RingBuffer;
+use grammers_crypto::DequeBuffer;
 
 /// The lightest MTProto transport protocol available. This is an
 /// implementation of the [abridged transport].
@@ -46,21 +46,19 @@ impl Abridged {
 }
 
 impl Transport for Abridged {
-    fn pack(&mut self, buffer: &mut RingBuffer<u8>) {
+    fn pack(&mut self, buffer: &mut DequeBuffer<u8>) {
         let len = buffer.len();
         assert_eq!(len % 4, 0);
 
         let len = len / 4;
         if len < 127 {
-            buffer.shift(1).extend([len as u8]);
+            buffer.extend_front(&[len as u8]);
         } else {
-            buffer
-                .shift(4)
-                .extend((0x7f | ((len as u32) << 8)).to_le_bytes());
+            buffer.extend_front(&(0x7f | ((len as u32) << 8)).to_le_bytes());
         }
 
         if !self.init {
-            buffer.shift(1).extend([0xef]);
+            buffer.extend_front(&[0xef]);
             self.init = true;
         }
     }
@@ -109,6 +107,7 @@ impl Transport for Abridged {
     }
 
     fn reset(&mut self) {
+        log::info!("resetting sending of header in abridged transport");
         self.init = false;
     }
 }
@@ -118,8 +117,8 @@ mod tests {
     use super::*;
 
     /// Returns a new abridged transport, and `n` bytes of input data for it.
-    fn setup_pack(n: usize) -> (Abridged, RingBuffer<u8>) {
-        let mut buffer = RingBuffer::with_capacity(n, 0);
+    fn setup_pack(n: usize) -> (Abridged, DequeBuffer<u8>) {
+        let mut buffer = DequeBuffer::with_capacity(n, 0);
         buffer.extend((0..n).map(|x| (x & 0xff) as u8));
         (Abridged::new(), buffer)
     }
@@ -159,7 +158,7 @@ mod tests {
     #[test]
     fn unpack_small() {
         let mut transport = Abridged::new();
-        let mut buffer = RingBuffer::with_capacity(1, 0);
+        let mut buffer = DequeBuffer::with_capacity(1, 0);
         buffer.extend([1]);
         assert_eq!(transport.unpack(&buffer[..]), Err(Error::MissingBytes));
     }
@@ -169,9 +168,9 @@ mod tests {
         let (mut transport, mut buffer) = setup_pack(128);
         let orig = buffer.clone();
         transport.pack(&mut buffer);
-        buffer.skip(1); // init byte
-        let offset = transport.unpack(&buffer[..]).unwrap();
-        assert_eq!(&buffer[offset.data_start..offset.data_end], &orig[..]);
+        let n = 1; // init byte
+        let offset = transport.unpack(&buffer[n..][..]).unwrap();
+        assert_eq!(&buffer[n..][offset.data_start..offset.data_end], &orig[..]);
     }
 
     #[test]
@@ -179,7 +178,7 @@ mod tests {
         let (mut transport, mut buffer) = setup_pack(128);
         let orig = buffer.clone();
 
-        let mut two_buffer = RingBuffer::with_capacity(0, 0);
+        let mut two_buffer = DequeBuffer::with_capacity(0, 0);
         transport.pack(&mut buffer);
         two_buffer.extend(&buffer[1..]); // init byte
         let single_size = two_buffer.len();
@@ -192,8 +191,8 @@ mod tests {
         assert_eq!(&buffer[offset.data_start..offset.data_end], &orig[..]);
         assert_eq!(offset.next_offset, single_size);
 
-        two_buffer.skip(offset.next_offset);
-        let offset = transport.unpack(&two_buffer[..]).unwrap();
+        let n = offset.next_offset;
+        let offset = transport.unpack(&two_buffer[n..]).unwrap();
         assert_eq!(&buffer[offset.data_start..offset.data_end], &orig[..]);
     }
 
@@ -202,15 +201,15 @@ mod tests {
         let (mut transport, mut buffer) = setup_pack(1024);
         let orig = buffer.clone();
         transport.pack(&mut buffer);
-        buffer.skip(1); // init byte
-        let offset = transport.unpack(&buffer[..]).unwrap();
-        assert_eq!(&buffer[offset.data_start..offset.data_end], &orig[..]);
+        let n = 1; // init byte
+        let offset = transport.unpack(&buffer[n..]).unwrap();
+        assert_eq!(&buffer[n..][offset.data_start..offset.data_end], &orig[..]);
     }
 
     #[test]
     fn unpack_bad_status() {
         let mut transport = Abridged::new();
-        let mut buffer = RingBuffer::with_capacity(5, 0);
+        let mut buffer = DequeBuffer::with_capacity(5, 0);
         buffer.push(1u8);
         buffer.extend(&(-404_i32).to_le_bytes());
 

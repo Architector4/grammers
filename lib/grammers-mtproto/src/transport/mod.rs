@@ -17,7 +17,7 @@ mod intermediate;
 
 pub use abridged::Abridged;
 pub use full::Full;
-use grammers_crypto::RingBuffer;
+use grammers_crypto::DequeBuffer;
 pub use intermediate::Intermediate;
 use std::fmt;
 
@@ -69,15 +69,15 @@ impl fmt::Display for Error {
         write!(f, "transport error: ")?;
         match self {
             Error::MissingBytes => write!(f, "need more bytes"),
-            Error::BadLen { got } => write!(f, "bad len (got {})", got),
+            Error::BadLen { got } => write!(f, "bad len (got {got})"),
             Error::BadSeq { expected, got } => {
-                write!(f, "bad seq (expected {}, got {})", expected, got)
+                write!(f, "bad seq (expected {expected}, got {got})")
             }
             Error::BadCrc { expected, got } => {
-                write!(f, "bad crc (expected {}, got {})", expected, got)
+                write!(f, "bad crc (expected {expected}, got {got})")
             }
             Error::BadStatus { status } => {
-                write!(f, "bad status (negative length -{})", status)
+                write!(f, "bad status (negative length -{status})")
             }
         }
     }
@@ -88,7 +88,7 @@ pub trait Transport {
     /// Packs the input buffer in-place.
     ///
     /// Panics if `input.len()` is not divisible by 4.
-    fn pack(&mut self, buffer: &mut RingBuffer<u8>);
+    fn pack(&mut self, buffer: &mut DequeBuffer<u8>);
 
     /// Unpacks the input buffer in-place.
     fn unpack(&mut self, buffer: &[u8]) -> Result<UnpackedOffset, Error>;
