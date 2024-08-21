@@ -278,7 +278,7 @@ impl Message {
     /// If this message was forwarded from a previous message, and the original sender's privacy
     /// settings allow it, return the original sender.
     pub fn forwarded_from(&self) -> Option<&types::Chat> {
-        self.msg
+        self.raw
             .fwd_from
             .as_ref()
             .and_then(|fwd_from| {
@@ -294,7 +294,7 @@ impl Message {
             return Some(chat.name());
         }
 
-        self.msg
+        self.raw
             .fwd_from
             .as_ref()
             .and_then(|fwd_from| {
