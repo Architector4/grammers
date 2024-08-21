@@ -19,6 +19,7 @@ pub struct InputMessage {
     pub(crate) background: bool,
     pub(crate) clear_draft: bool,
     pub(crate) entities: Vec<tl::enums::MessageEntity>,
+    pub(crate) invert_media: bool,
     pub(crate) link_preview: bool,
     pub(crate) reply_markup: Option<tl::enums::ReplyMarkup>,
     pub(crate) reply_to: Option<i32>,
@@ -51,6 +52,14 @@ impl InputMessage {
         self
     }
 
+    /// Whether the media will be inverted.
+    ///
+    /// If inverted, photos, videos, and documents will appear at the bottom and link previews at the top of the message.
+    pub fn invert_media(mut self, invert_media: bool) -> Self {
+        self.invert_media = invert_media;
+        self
+    }
+
     /// Whether the link preview be shown for the message.
     ///
     /// This has no effect when sending media, which cannot contain a link preview.
@@ -70,7 +79,7 @@ impl InputMessage {
     /// See [`crate::reply_markup`] for the different available markups along with how
     /// they behave.
     pub fn reply_markup<RM: ReplyMarkup>(mut self, markup: &RM) -> Self {
-        self.reply_markup = Some(markup.to_reply_markup().0);
+        self.reply_markup = Some(markup.to_reply_markup().raw);
         self
     }
 
@@ -126,7 +135,7 @@ impl InputMessage {
         self.media = Some(
             (tl::types::InputMediaUploadedPhoto {
                 spoiler: false,
-                file: file.input_file,
+                file: file.raw,
                 stickers: None,
                 ttl_seconds: self.media_ttl,
             })
@@ -166,7 +175,7 @@ impl InputMessage {
                 nosound_video: false,
                 force_file: false,
                 spoiler: false,
-                file: file.input_file,
+                file: file.raw,
                 thumb: None,
                 mime_type,
                 attributes: vec![(tl::types::DocumentAttributeFilename { file_name }).into()],
@@ -196,7 +205,7 @@ impl InputMessage {
     /// ```
     pub fn thumbnail(mut self, thumb: Uploaded) -> Self {
         if let Some(tl::enums::InputMedia::UploadedDocument(document)) = &mut self.media {
-            document.thumb = Some(thumb.input_file);
+            document.thumb = Some(thumb.raw);
         }
         self
     }
@@ -254,7 +263,7 @@ impl InputMessage {
     ///
     /// You can use this to send media from another message without re-uploading it.
     pub fn copy_media(mut self, media: &Media) -> Self {
-        self.media = media.to_input_media();
+        self.media = media.to_raw_input_media();
         self
     }
 
@@ -271,7 +280,7 @@ impl InputMessage {
                 nosound_video: false,
                 force_file: true,
                 spoiler: false,
-                file: file.input_file,
+                file: file.raw,
                 thumb: None,
                 mime_type,
                 attributes: vec![(tl::types::DocumentAttributeFilename { file_name }).into()],

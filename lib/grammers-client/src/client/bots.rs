@@ -160,16 +160,20 @@ impl Client {
     ) -> Result<bool, InvocationError> {
         let message: InputMessage = input_message.into();
         let entities = parse_mention_entities(self, message.entities);
+        let dc_id = message_id.dc_id();
         let result = self
-            .invoke(&tl::functions::messages::EditInlineBotMessage {
-                id: message_id,
-                message: Some(message.text),
-                media: message.media,
-                entities,
-                no_webpage: !message.link_preview,
-                reply_markup: message.reply_markup,
-                invert_media: false,
-            })
+            .invoke_in_dc(
+                &tl::functions::messages::EditInlineBotMessage {
+                    id: message_id,
+                    message: Some(message.text),
+                    media: message.media,
+                    entities,
+                    no_webpage: !message.link_preview,
+                    reply_markup: message.reply_markup,
+                    invert_media: message.invert_media,
+                },
+                dc_id,
+            )
             .await?;
         Ok(result)
     }

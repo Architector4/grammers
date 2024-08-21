@@ -22,10 +22,12 @@
 //! how much data a button's payload can contain, and to keep it simple, we're storing it inline
 //! in decimal, so the numbers can't get too large).
 
+use futures_util::future::{select, Either};
 use grammers_client::session::Session;
 use grammers_client::{button, reply_markup, Client, Config, InputMessage, Update};
 use simple_logger::SimpleLogger;
 use std::env;
+use std::pin::pin;
 use tokio::{runtime, task};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -131,17 +133,27 @@ async fn async_main() -> Result {
     }
 
     println!("Waiting for messages...");
-    while let Some(update) = client.next_update().await? {
+    loop {
+        let exit = pin!(async { tokio::signal::ctrl_c().await });
+        let upd = pin!(async { client.next_update().await });
+
+        let update = match select(exit, upd).await {
+            Either::Left(_) => {
+                println!("Exiting...");
+                break;
+            }
+            Either::Right((u, _)) => u?,
+        };
+
         let handle = client.clone();
         task::spawn(async move {
-            match handle_update(handle, update).await {
-                Ok(_) => {}
-                Err(e) => eprintln!("Error handling updates!: {e}"),
+            if let Err(e) = handle_update(handle, update).await {
+                eprintln!("Error handling updates!: {e}")
             }
         });
     }
 
-    println!("Saving session file and exiting...");
+    println!("Saving session file...");
     client.session().save_to_file(SESSION_FILE)?;
     Ok(())
 }

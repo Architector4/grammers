@@ -293,12 +293,8 @@ impl ProfilePhotoIter {
                     iter.request.offset += photos.len() as i32;
                 }
 
-                let client = &iter.client;
-                iter.buffer.extend(
-                    photos
-                        .into_iter()
-                        .map(|x| Photo::from_raw(x, client.clone())),
-                );
+                iter.buffer
+                    .extend(photos.into_iter().map(|x| Photo::from_raw(x)));
 
                 Ok(total)
             }
@@ -323,9 +319,9 @@ impl ProfilePhotoIter {
                 while let Some(message) = iter.next().await? {
                     if let Some(tl::enums::MessageAction::ChatEditPhoto(
                         tl::types::MessageActionChatEditPhoto { photo },
-                    )) = message.action
+                    )) = message.raw_action
                     {
-                        return Ok(Some(Photo::from_raw(photo, message.client.clone())));
+                        return Ok(Some(Photo::from_raw(photo)));
                     } else {
                         continue;
                     }
@@ -763,7 +759,7 @@ impl Client {
         if !hosts.contains(&host) {
             return None;
         }
-        let paths = path.split("/").collect::<Vec<&str>>();
+        let paths = path.split("/").skip(1).collect::<Vec<&str>>();
 
         if paths.len() == 1 {
             if paths[0].starts_with("+") {
