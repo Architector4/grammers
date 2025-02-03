@@ -336,7 +336,7 @@ impl Message {
     /// If this message was forwarded from a previous message, return the original sender's name.
     pub fn forwarded_from_name(&self) -> Option<&str> {
         if let Some(chat) = self.forwarded_from() {
-            return Some(chat.name());
+            return chat.name();
         }
 
         self.raw
