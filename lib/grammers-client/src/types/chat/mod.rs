@@ -84,12 +84,13 @@ impl Chat {
     /// For private conversations (users), this is their first name. For groups and channels,
     /// this is their title.
     ///
-    /// The name may be empty if the chat is inaccessible or if the account was deleted.
-    pub fn name(&self) -> &str {
+    /// The name will be `None` if the chat is inaccessible or if the account was deleted. It may
+    /// also be `None` if you received it previously.
+    pub fn name(&self) -> Option<&str> {
         match self {
             Self::User(user) => user.first_name(),
             Self::Group(group) => group.title(),
-            Self::Channel(channel) => channel.title(),
+            Self::Channel(channel) => Some(channel.title()),
         }
     }
 
@@ -154,6 +155,20 @@ impl Chat {
             Self::User(user) => user.username(),
             Self::Group(group) => group.username(),
             Self::Channel(channel) => channel.username(),
+        }
+    }
+
+    /// Return collectible usernames of this chat, if any.
+    ///
+    /// The returned usernames do not contain the "@" prefix.
+    ///
+    /// Outside of the application, people may link to this user with one of its username, such
+    /// as https://t.me/username.
+    pub fn usernames(&self) -> Vec<&str> {
+        match self {
+            Self::User(user) => user.usernames(),
+            Self::Group(group) => group.usernames(),
+            Self::Channel(channel) => channel.usernames(),
         }
     }
 

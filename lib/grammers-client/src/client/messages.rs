@@ -7,24 +7,17 @@
 // except according to those terms.
 
 //! Methods related to sending messages.
+use crate::types::message::EMPTY_MESSAGE;
 use crate::types::{InputReactions, IterBuffer, Message};
 use crate::utils::{generate_random_id, generate_random_ids};
-use crate::{types, ChatMap, Client};
+use crate::{types, ChatMap, Client, InputMedia};
 use chrono::{DateTime, FixedOffset};
 pub use grammers_mtsender::{AuthorizationError, InvocationError};
 use grammers_session::PackedChat;
 use grammers_tl_types as tl;
+use log::{log_enabled, warn, Level};
 use std::collections::HashMap;
 use tl::enums::InputPeer;
-use tl::functions::messages::SendReaction;
-
-fn get_message_id(message: &tl::enums::Message) -> i32 {
-    match message {
-        tl::enums::Message::Empty(m) => m.id,
-        tl::enums::Message::Message(m) => m.id,
-        tl::enums::Message::Service(m) => m.id,
-    }
-}
 
 fn map_random_ids_to_messages(
     client: &Client,
@@ -72,7 +65,20 @@ fn map_random_ids_to_messages(
 
             random_ids
                 .iter()
-                .map(|rnd| rnd_to_id.get(rnd).and_then(|id| id_to_msg.remove(id)))
+                .map(|rnd| {
+                    rnd_to_id
+                        .get(rnd)
+                        .and_then(|id| id_to_msg.remove(id))
+                        .or_else(|| {
+                            if id_to_msg.len() == 1 {
+                                // If there's no random_id to map from, in the common case a single message
+                                // should've been produced regardless, so try to recover by returning that.
+                                id_to_msg.drain().next().map(|(_, m)| m)
+                            } else {
+                                None
+                            }
+                        })
+                })
                 .collect()
         }
         _ => panic!("API returned something other than Updates so messages can't be mapped"),
@@ -151,12 +157,12 @@ impl<R: tl::RemoteCall<Return = tl::enums::messages::Messages>> IterBuffer<R, Me
                 // If the highest fetched message ID is lower than or equal to the limit,
                 // there can't be more messages after (highest ID - limit), because the
                 // absolute lowest message ID is 1.
-                self.last_chunk = m.messages.is_empty() || get_message_id(&m.messages[0]) <= limit;
+                self.last_chunk = m.messages.is_empty() || m.messages[0].id() <= limit;
                 self.total = Some(m.count as usize);
                 (m.messages, m.users, m.chats, m.next_rate)
             }
             Messages::ChannelMessages(m) => {
-                self.last_chunk = m.messages.is_empty() || get_message_id(&m.messages[0]) <= limit;
+                self.last_chunk = m.messages.is_empty() || m.messages[0].id() <= limit;
                 self.total = Some(m.count as usize);
                 (m.messages, m.users, m.chats, None)
             }
@@ -548,11 +554,133 @@ impl Client {
             tl::enums::Updates::UpdateShortSentMessage(updates) => {
                 Message::from_raw_short_updates(self, updates, message, chat)
             }
-            updates => map_random_ids_to_messages(self, &[random_id], updates)
-                .pop()
-                .unwrap()
-                .unwrap(),
+            updates => {
+                let updates_debug = if log_enabled!(Level::Warn) {
+                    Some(updates.clone())
+                } else {
+                    None
+                };
+
+                match map_random_ids_to_messages(self, &[random_id], updates)
+                    .pop()
+                    .flatten()
+                {
+                    Some(message) => message,
+                    None => {
+                        if let Some(updates) = updates_debug {
+                            warn!("failed to find just-sent message in response updates; please report this:");
+                            warn!("{:#?}", updates);
+                        }
+                        Message::from_raw(self, EMPTY_MESSAGE.into(), &ChatMap::empty()).unwrap()
+                    }
+                }
+            }
         })
+    }
+
+    /// Sends a album to the desired chat.
+    ///
+    /// This method can also be used to send a bunch of media such as photos, videos, documents, polls, etc.
+    ///
+    /// If you want to send a local file as media, you will need to use
+    /// [`Client::upload_file`] first.
+    ///
+    /// Refer to [`InputMedia`] to learn more formatting options, such as using markdown.
+    ///
+    /// See also: [`Message::respond_album`], [`Message::reply_album`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn f(chat: grammers_client::types::Chat, client: grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
+    /// use grammers_client::InputMedia;
+    ///
+    /// client.send_album(&chat, vec![InputMedia::caption("A album").photo_url("https://example.com/cat.jpg")]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`InputMedia`]: crate::InputMedia
+    pub async fn send_album<C: Into<PackedChat>>(
+        &self,
+        chat: C,
+        mut medias: Vec<InputMedia>,
+    ) -> Result<Vec<Option<Message>>, InvocationError> {
+        let chat = chat.into();
+        let random_ids = generate_random_ids(medias.len());
+
+        // Upload external files
+        for media in medias.iter_mut() {
+            let raw_media = media.media.clone().unwrap();
+
+            if matches!(
+                raw_media,
+                tl::enums::InputMedia::UploadedPhoto(_)
+                    | tl::enums::InputMedia::PhotoExternal(_)
+                    | tl::enums::InputMedia::UploadedDocument(_)
+                    | tl::enums::InputMedia::DocumentExternal(_)
+            ) {
+                let uploaded = self
+                    .invoke(&tl::functions::messages::UploadMedia {
+                        business_connection_id: None,
+                        peer: chat.to_input_peer(),
+                        media: raw_media,
+                    })
+                    .await?;
+                media.media = Some(
+                    types::Media::from_raw(uploaded)
+                        .unwrap()
+                        .to_raw_input_media()
+                        .unwrap(),
+                );
+            }
+        }
+
+        let first_media = medias.first().unwrap();
+
+        let updates = self
+            .invoke(&tl::functions::messages::SendMultiMedia {
+                silent: false,
+                background: false,
+                clear_draft: false,
+                peer: chat.to_input_peer(),
+                reply_to: first_media.reply_to.map(|reply_to_msg_id| {
+                    tl::types::InputReplyToMessage {
+                        reply_to_msg_id,
+                        top_msg_id: None,
+                        reply_to_peer_id: None,
+                        quote_text: None,
+                        quote_entities: None,
+                        quote_offset: None,
+                    }
+                    .into()
+                }),
+                schedule_date: None,
+                multi_media: medias
+                    .into_iter()
+                    .zip(random_ids.iter())
+                    .map(|(input_media, random_id)| {
+                        let entities = parse_mention_entities(self, input_media.entities);
+                        let raw_media = input_media.media.unwrap();
+
+                        tl::enums::InputSingleMedia::Media(tl::types::InputSingleMedia {
+                            media: raw_media,
+                            random_id: *random_id,
+                            message: input_media.caption,
+                            entities,
+                        })
+                    })
+                    .collect(),
+                send_as: None,
+                noforwards: false,
+                update_stickersets_order: false,
+                invert_media: false,
+                quick_reply_shortcut: None,
+                effect: None,
+            })
+            .await?;
+
+        Ok(map_random_ids_to_messages(self, &random_ids, updates))
     }
 
     /// Edits an existing message.
@@ -813,7 +941,8 @@ impl Client {
     /// let mut messages = client.search_messages(&chat).query("grammers is cool");
     ///
     /// while let Some(message) = messages.next().await? {
-    ///     println!("{}", message.sender().unwrap().name());
+    ///     let sender = message.sender().unwrap();
+    ///     println!("{}", sender.name().unwrap_or(&sender.id().to_string()));
     /// }
     /// # Ok(())
     /// # }
@@ -835,7 +964,7 @@ impl Client {
     /// let mut messages = client.search_all_messages().query("grammers is cool");
     ///
     /// while let Some(message) = messages.next().await? {
-    ///     println!("{}", message.chat().name());
+    ///     println!("{}", message.chat().name().unwrap_or(&message.chat().id().to_string()));
     /// }
     /// # Ok(())
     /// # }
@@ -908,10 +1037,12 @@ impl Client {
     ///
     /// ```
     /// # async fn f(chat: grammers_client::types::Chat, client: grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
+    /// let name = chat.name().map_or(chat.id().to_string(), |name| name.to_owned());
+    ///
     /// if let Some(message) = client.get_pinned_message(&chat).await? {
-    ///     println!("There is a message pinned in {}: {}", chat.name(), message.text());
+    ///     println!("There is a message pinned in {}: {}", name.to_owned(), message.text());
     /// } else {
-    ///     println!("There are no messages pinned in {}", chat.name());
+    ///     println!("There are no messages pinned in {}", name.to_owned());
     /// }
     /// # Ok(())
     /// # }
@@ -1036,7 +1167,7 @@ impl Client {
     /// # async fn f(chat: grammers_client::types::Chat, client: grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
     /// let message_id = 123;
     ///
-    /// client.send_reaction(&chat, message_id, "👍").await?;
+    /// client.send_reactions(&chat, message_id, "👍").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1050,11 +1181,24 @@ impl Client {
     /// let message_id = 123;
     /// let reactions = InputReactions::emoticon("🤯").big().add_to_recent();
     ///
-    /// client.send_reaction(&chat, message_id, reactions).await?;
+    /// client.send_reactions(&chat, message_id, reactions).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn send_reaction<C: Into<PackedChat>, R: Into<InputReactions>>(
+    ///
+    /// Remove reactions
+    ///
+    /// ```
+    /// # async fn f(chat: grammers_client::types::Chat, client: grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
+    /// use grammers_client::types::InputReactions;
+    ///
+    /// let message_id = 123;
+    ///
+    /// client.send_reactions(&chat, message_id, InputReactions::remove()).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send_reactions<C: Into<PackedChat>, R: Into<InputReactions>>(
         &self,
         chat: C,
         message_id: i32,
@@ -1062,7 +1206,7 @@ impl Client {
     ) -> Result<(), InvocationError> {
         let reactions = reactions.into();
 
-        self.invoke(&SendReaction {
+        self.invoke(&tl::functions::messages::SendReaction {
             big: reactions.big,
             add_to_recent: reactions.add_to_recent,
             peer: chat.into().to_input_peer(),

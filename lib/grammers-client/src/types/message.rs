@@ -8,19 +8,64 @@
 #[cfg(any(feature = "markdown", feature = "html"))]
 use crate::parsers;
 use crate::types::reactions::InputReactions;
-use crate::types::{Downloadable, InputMessage, Media, Photo};
-use crate::utils;
+use crate::types::{InputMessage, Media, Photo};
 use crate::ChatMap;
 use crate::{types, Client};
+use crate::{utils, InputMedia};
 use chrono::{DateTime, Utc};
 use grammers_mtsender::InvocationError;
 use grammers_session::PackedChat;
 use grammers_tl_types as tl;
 use std::fmt;
-use std::io;
-use std::path::Path;
 use std::sync::Arc;
 use types::Chat;
+
+#[cfg(feature = "fs")]
+use {
+    crate::types::Downloadable,
+    std::{io, path::Path},
+};
+
+pub(crate) const EMPTY_MESSAGE: tl::types::Message = tl::types::Message {
+    out: false,
+    mentioned: false,
+    media_unread: false,
+    silent: false,
+    post: false,
+    from_scheduled: false,
+    legacy: false,
+    edit_hide: false,
+    pinned: false,
+    noforwards: false,
+    invert_media: false,
+    offline: false,
+    id: 0,
+    from_id: None,
+    from_boosts_applied: None,
+    peer_id: tl::enums::Peer::User(tl::types::PeerUser { user_id: 0 }),
+    saved_peer_id: None,
+    fwd_from: None,
+    via_bot_id: None,
+    via_business_bot_id: None,
+    reply_to: None,
+    date: 0,
+    message: String::new(),
+    media: None,
+    reply_markup: None,
+    entities: None,
+    views: None,
+    forwards: None,
+    replies: None,
+    edit_date: None,
+    post_author: None,
+    grouped_id: None,
+    reactions: None,
+    restriction_reason: None,
+    ttl_period: None,
+    quick_reply_shortcut_id: None,
+    effect: None,
+    factcheck: None,
+};
 
 /// Represents a Telegram message, which includes text messages, messages with media, and service
 /// messages.
@@ -367,7 +412,7 @@ impl Message {
     /// This not only includes photos or videos, but also contacts, polls, documents, locations
     /// and many other types.
     pub fn media(&self) -> Option<types::Media> {
-        self.raw.media.clone().and_then(|x| Media::from_raw(x))
+        self.raw.media.clone().and_then(Media::from_raw)
     }
 
     /// If the message has a reply markup (which can happen for messages produced by bots),
@@ -430,12 +475,23 @@ impl Message {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// Remove reactions
+    ///
+    /// ```
+    /// # async fn f(message: grammers_client::types::Message, client: grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
+    /// use grammers_client::types::InputReactions;
+    ///
+    /// message.react(InputReactions::remove()).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn react<R: Into<InputReactions>>(
         &self,
         reactions: R,
     ) -> Result<(), InvocationError> {
         self.client
-            .send_reaction(self.chat(), self.id(), reactions)
+            .send_reactions(self.chat(), self.id(), reactions)
             .await?;
         Ok(())
     }
@@ -522,6 +578,17 @@ impl Message {
         self.client.send_message(&self.chat(), message).await
     }
 
+    /// Respond to this message by sending a album in the same chat, but without directly
+    /// replying to it.
+    ///
+    /// Shorthand for `Client::send_album`.
+    pub async fn respond_album(
+        &self,
+        medias: Vec<InputMedia>,
+    ) -> Result<Vec<Option<Self>>, InvocationError> {
+        self.client.send_album(&self.chat(), medias).await
+    }
+
     /// Directly reply to this message by sending a new message in the same chat that replies to
     /// it. This methods overrides the `reply_to` on the `InputMessage` to point to `self`.
     ///
@@ -531,6 +598,18 @@ impl Message {
         self.client
             .send_message(&self.chat(), message.reply_to(Some(self.raw.id)))
             .await
+    }
+
+    /// Directly reply to this message by sending a album in the same chat that replies to
+    /// it. This methods overrides the `reply_to` on the first `InputMedia` to point to `self`.
+    ///
+    /// Shorthand for `Client::send_album`.
+    pub async fn reply_album(
+        &self,
+        mut medias: Vec<InputMedia>,
+    ) -> Result<Vec<Option<Self>>, InvocationError> {
+        medias.first_mut().unwrap().reply_to = Some(self.raw.id);
+        self.client.send_album(&self.chat(), medias).await
     }
 
     /// Forward this message to another (or the same) chat.
@@ -628,6 +707,7 @@ impl Message {
     /// Returns `true` if there was media to download, or `false` otherwise.
     ///
     /// Shorthand for `Client::download_media`.
+    #[cfg(feature = "fs")]
     pub async fn download_media<P: AsRef<Path>>(&self, path: P) -> Result<bool, io::Error> {
         // TODO probably encode failed download in error
         if let Some(media) = self.media() {

@@ -5,18 +5,19 @@
 // <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-use grammers_mtproto::{mtp, transport};
-use grammers_mtsender::{self as sender, ReconnectionPolicy, Sender};
+use grammers_mtproto::mtp;
+use grammers_mtsender::{self as sender, ReconnectionPolicy, Sender, ServerAddr};
 use grammers_session::{ChatHashCache, MessageBox, Session};
 use grammers_tl_types as tl;
 use sender::Enqueuer;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::net::SocketAddr;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
 use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock};
+use web_time::Instant;
+
+use super::net;
 
 /// When no locale is found, use this one instead.
 const DEFAULT_LOCALE: &str = "en";
@@ -55,14 +56,12 @@ pub struct InitParams {
     /// Should the client catch-up on updates sent to it while it was offline?
     ///
     /// By default, updates sent while the client was offline are ignored.
-    // TODO catch up doesn't occur until we get an update that tells us if there was a gap, but
-    // maybe we should forcibly try to get difference even if we didn't miss anything?
     pub catch_up: bool,
     /// Server address to connect to. By default, the library will connect to the address stored
     /// in the session file (or a default production address if no such address exists). This
     /// field can be used to override said address, and is most commonly used to connect to one
     /// of Telegram's test servers instead.
-    pub server_addr: Option<SocketAddr>,
+    pub server_addr: Option<ServerAddr>,
     /// The threshold below which the library should automatically sleep on flood-wait and slow
     /// mode wait errors (inclusive). For instance, if an
     /// `RpcError { name: "FLOOD_WAIT", value: Some(17) }` (flood, must wait 17 seconds) occurs
@@ -141,7 +140,7 @@ pub(crate) struct ClientState {
 }
 
 pub(crate) struct Connection {
-    pub(crate) sender: AsyncMutex<Sender<transport::Full, mtp::Encrypted>>,
+    pub(crate) sender: AsyncMutex<Sender<net::Transport, mtp::Encrypted>>,
     pub(crate) request_tx: RwLock<Enqueuer>,
     pub(crate) step_counter: AtomicU32,
 }

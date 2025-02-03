@@ -10,6 +10,7 @@
 //!
 //! A lot of fields in the types exported from this module are currently public even though
 //! they directly uses `grammers-tl-types`. This will probably change before the 1.0 release.
+pub mod action;
 pub mod attributes;
 pub mod button;
 pub mod callback_query;
@@ -19,6 +20,7 @@ pub mod chats;
 pub mod dialog;
 pub mod downloadable;
 pub mod inline;
+pub mod input_media;
 pub mod input_message;
 pub mod iter_buffer;
 pub mod login_token;
@@ -34,6 +36,7 @@ pub mod reply_markup;
 pub mod terms_of_service;
 pub mod update;
 
+pub use action::ActionSender;
 pub use attributes::Attribute;
 pub use callback_query::CallbackQuery;
 pub use chat::{Channel, Chat, Group, PackedChat, Platform, RestrictionReason, User};
@@ -44,6 +47,7 @@ pub use dialog::Dialog;
 pub use downloadable::{ChatPhoto, Downloadable, UserProfilePhoto};
 pub use inline::query::InlineQuery;
 pub use inline::send::InlineSend;
+pub use input_media::InputMedia;
 pub use input_message::InputMessage;
 pub use iter_buffer::IterBuffer;
 pub use login_token::LoginToken;

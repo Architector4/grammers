@@ -100,6 +100,8 @@ impl User {
                     stories_hidden: false,
                     stories_unavailable: true,
                     contact_require_premium: false,
+                    bot_business: false,
+                    bot_has_main_app: false,
                     id: empty.id,
                     access_hash: None,
                     first_name: None,
@@ -117,7 +119,7 @@ impl User {
                     stories_max_id: None,
                     color: None,
                     profile_color: None,
-                    bot_business: false,
+                    bot_active_users: None,
                 },
                 tl::enums::User::User(user) => user,
             },
@@ -156,9 +158,10 @@ impl User {
 
     /// Return the first name of this user.
     ///
-    /// If the account was deleted, the returned string will be empty.
-    pub fn first_name(&self) -> &str {
-        self.raw.first_name.as_deref().unwrap_or("")
+    /// The name will be `None` if the account was deleted. It may also be `None` if you received
+    /// it previously.
+    pub fn first_name(&self) -> Option<&str> {
+        self.raw.first_name.as_deref()
     }
 
     /// Return the last name of this user, if any.
@@ -174,7 +177,7 @@ impl User {
     /// This is equal to the user's first name concatenated with the user's last name, if this
     /// is not empty. Otherwise, it equals the user's first name.
     pub fn full_name(&self) -> String {
-        let first_name = self.first_name();
+        let first_name = self.first_name().unwrap_or_default();
         if let Some(last_name) = self.last_name() {
             let mut name = String::with_capacity(first_name.len() + 1 + last_name.len());
             name.push_str(first_name);
@@ -194,6 +197,26 @@ impl User {
     /// as https://t.me/username.
     pub fn username(&self) -> Option<&str> {
         self.raw.username.as_deref()
+    }
+
+    /// Return collectible usernames of this chat, if any.
+    ///
+    /// The returned usernames do not contain the "@" prefix.
+    ///
+    /// Outside of the application, people may link to this user with one of its username, such
+    /// as https://t.me/username.
+    pub fn usernames(&self) -> Vec<&str> {
+        self.raw
+            .usernames
+            .as_deref()
+            .map_or(Vec::new(), |usernames| {
+                usernames
+                    .iter()
+                    .map(|username| match username {
+                        tl::enums::Username::Username(username) => username.username.as_ref(),
+                    })
+                    .collect()
+            })
     }
 
     /// Return the phone number of this user, if they are not a bot and their privacy settings
@@ -247,7 +270,7 @@ impl User {
     /// If the current user is a bot, does it have [privacy mode] enabled?
     ///
     /// * Bots with privacy enabled won't see messages in groups unless they are replied or the
-    /// command includes their name (`/command@bot`).
+    ///   command includes their name (`/command@bot`).
     /// * Bots with privacy disabled will be able to see all messages in a group.
     ///
     /// [privacy mode]: https://core.telegram.org/bots#privacy-mode
